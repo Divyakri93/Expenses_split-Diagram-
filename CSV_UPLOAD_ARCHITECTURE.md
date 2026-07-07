@@ -57,6 +57,32 @@ flowchart TD
     style DB fill:#faf5ff,stroke:#a855f7,stroke-width:2px
 ```
 
+### 🗣️ How to Explain This Flow Diagram in Your Interview (Step-by-Step Summary)
+
+When explaining this diagram on a whiteboard or during a system design interview, walk the interviewer through the **4 logical layers** using this clear, structured summary:
+
+#### 1️⃣ Layer 1: Ingestion & RAM Buffering (The "Zero-Disk" Approach)
+* **What Happens:** The user uploads a CSV file via our React UI (`POST /api/expenses/import`). Instead of writing this file to the server's hard drive or `/tmp` directory, Express intercepts it using **Multer's Memory Storage**.
+* **Interview Talking Point:** *"To optimize performance and avoid disk I/O bottlenecks, we buffer incoming CSV uploads directly into server RAM (`req.file.buffer`). This gives us zero disk latency and eliminates the need for background cron jobs to clean up orphaned temporary files."*
+
+#### 2️⃣ Layer 2: Asynchronous Streaming & 12-Point Sanitization Engine
+* **What Happens:** The RAM buffer is converted into a Node.js Readable Stream and piped into `fast-csv` for non-blocking, row-by-row execution. Each row passes through our custom 12-Point Sanitization Engine.
+* **Interview Talking Point:** *"Instead of using `readFileSync` or `.toString().split('\n')`—which would block the Node.js single-threaded Event Loop and freeze concurrent users—we stream data asynchronously. As each row streams through, our engine performs Levenshtein fuzzy matching to correct typos in user names, cleans currency symbols, converts foreign currencies to INR using real-time rates, and calculates pro-rata split weights if a member joined or left mid-month."*
+
+#### 3️⃣ Layer 3: Precision Arithmetic & Human-in-the-Loop Preview
+* **What Happens:** All mathematical operations use `Big.js` with Banker's Rounding. Once the stream finishes, the backend sends a structured JSON preview (`valid_rows`, `warnings`, `errors`) back to the frontend without writing anything to the database.
+* **Interview Talking Point:** *"To prevent IEEE 754 floating-point errors (like `0.1 + 0.2 = 0.30000000000000004`), all expense and split calculations use arbitrary-precision decimal math (`Big.js`). Crucially, we decouple validation from database ingestion—we return a clean preview to the React UI so the user can verify flagged warnings or pro-rata adjustments before anything touches the database. This is our Human-in-the-Loop verification layer."*
+
+#### 4️⃣ Layer 4: Two-Phase Commit & ACID Transactional Database Save
+* **What Happens:** Once the user approves the preview in the React UI, they click "Commit" (`POST /api/expenses/commit`). The backend initiates a Sequelize database transaction (`BEGIN TRANSACTION`).
+* **Interview Pitch:** *"Finally, upon user confirmation, we execute an ACID Database Transaction. We bulk-insert the group, members, expenses, and splits. To guarantee exact zero-sum accounting without even $0.01$ penny drift, we assign calculated rounded shares to the first $N-1$ members and allocate the exact remaining balance (`baseAmount - totalAllocated`) to the final member. If any database query fails, the entire transaction rolls back (`ROLLBACK`), guaranteeing zero partial data or corrupted ledgers."*
+
+---
+
+> [!TIP]
+> **🌟 The 60-Second "Golden Summary" (Memorize This Pitch for the Interviewer):**
+> *"Our CSV ingestion pipeline is built on a **Two-Phase Architecture**. In **Phase 1 (Stateless Processing)**, we buffer uploads directly into Node.js RAM using Multer and pipe them asynchronously through `fast-csv` to prevent Event Loop blocking. Each row passes through our 12-point sanitization engine—handling Levenshtein typo correction, currency conversion, and mid-month pro-rata calculations using `Big.js` for zero floating-point drift. We return a clean preview to the React UI for user verification. In **Phase 2 (ACID Commit)**, upon user approval, we persist the data within a strict Sequelize database transaction using a remainder-absorption algorithm that guarantees 100% zero-sum ledger balance without a single penny of drift."*
+
 ---
 
 ## 🔬 2. The 12-Point Row Processing Pipeline (What Happens Inside the Engine?)
