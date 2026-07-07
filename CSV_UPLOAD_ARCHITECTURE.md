@@ -9,42 +9,89 @@ This document is tailored specifically for **Technical Interviews** and **System
 
 ---
 
-## ✍️ Whiteboard Architecture Diagram (Draw This in Your Interview!)
+## 🎨 1. Visual System Architecture Diagram (How Things Move End-to-End)
 
-When asked to *draw the architecture*, draw these 4 distinct layers and explain how data flows between them without touching the disk during validation:
+When an interviewer asks you to **explain or draw the system architecture**, show them this high-level flowchart. It illustrates how data moves from the user's browser, gets buffered into RAM (without touching the hard drive!), streams through the cleaning engine, gets verified by the user, and finally commits to the database in a secure ACID transaction:
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor User as 👤 User / Frontend (React)
-    participant API as 🚀 Express Router & Multer
-    participant Engine as ⚙️ Stream Parser & 12-Point Sanitization
-    participant UI as 🖥️ Interactive Verification UI
-    participant DB as 🗄️ Sequelize ACID Transaction (SQLite/SQL)
-
-    Note over User, API: Phase 1: Ingestion & Sanitization
-    User->>API: POST /api/expenses/import (Multipart CSV File)
-    API->>Engine: Pass File Buffer via RAM (Multer MemoryStorage)
-    Engine->>Engine: Stream Rows via fast-csv (Non-blocking I/O)
-    Engine->>Engine: Run 12-Point Sanitization & Pro-Rata Pipeline
-    Engine-->>User: Return Categorized JSON (Valid, Warnings, Errors, Anomalies)
-
-    Note over User, UI: Phase 2: Human-in-the-Loop Review
-    User->>UI: Review Flagged Typos, Currency Conversions & Split Rules
-    User->>UI: Apply Manual Overrides & Approve Corrections
-    
-    Note over UI, DB: Phase 3: ACID Persistence
-    UI->>DB: POST /api/expenses/commit (Approved Clean Payload)
-    DB->>DB: BEGIN Transaction (sequelize.transaction)
-    DB->>DB: Insert Group & Members (with Join/Leave Dates)
-    DB->>DB: Bulk Insert Expenses & Zero-Sum ExpenseSplits
-    alt All Inserts Succeed
-        DB->>DB: COMMIT Transaction ✅
-        DB-->>User: 200 OK (Successfully Committed)
-    else Any Error / Constraint Failure
-        DB->>DB: ROLLBACK Transaction ❌
-        DB-->>User: 500 Error (Zero Data Corruption)
+flowchart TD
+    subgraph Client ["🖥️ 1. FRONTEND LAYER (React UI)"]
+        A["📁 User Selects & Uploads CSV File"]
+        B["🧙‍♂️ CSV Processing Wizard UI"]
+        C["📊 Review Flagged Errors, Warnings & Pro-Rata Splits"]
     end
+
+    subgraph Server ["⚡ 2. BACKEND API & RAM BUFFER (Express / Node.js)"]
+        D["🚀 POST /api/expenses/import"]
+        E["💾 Multer Memory Storage\n(File buffered directly in RAM - Zero Disk Latency!)"]
+    end
+
+    subgraph Engine ["⚙️ 3. SANITIZATION & LOGIC ENGINE (fast-csv / Big.js)"]
+        F["🌊 Asynchronous Stream Parser\n(Row-by-Row non-blocking Event Loop)"]
+        G["🔍 12-Point Data Sanitization Pipeline\n(Fuzzy Matching, Date Fixes, Currency Conversion)"]
+        H["🏷️ Structured JSON Payload\n(Valid Rows, Warnings, Errors, Temporal Anomalies)"]
+    end
+
+    subgraph DB ["🗄️ 4. ACID DATABASE COMMIT LAYER (Sequelize / SQL)"]
+        I["🔐 POST /api/expenses/commit\n(User approves cleaned data)"]
+        J["🛡️ Sequelize Database Transaction\n(BEGIN TRANSACTION)"]
+        K["✅ Bulk Insert Group, Expenses & Zero-Sum Splits\n(COMMIT if 100% Valid | ROLLBACK if any error)"]
+    end
+
+    %% Data Flow Connections
+    A ==>|"1. Upload Multipart File"| D
+    D ==>|"2. Store in RAM"| E
+    E ==>|"3. Pipe Memory Stream"| F
+    F ==>|"4. Process Each Row"| G
+    G ==>|"5. Categorize Results"| H
+    H ==>|"6. Send JSON Preview to UI"| B
+    B ==>|"7. User Inspects & Edits"| C
+    C ==>|"8. Send Final Approved Data"| I
+    I ==>|"9. Start Database Transaction"| J
+    J ==>|"10. Save to Database"| K
+
+    %% Styling
+    style Client fill:#eff6ff,stroke:#3b82f6,stroke-width:2px
+    style Server fill:#f0fdf4,stroke:#22c55e,stroke-width:2px
+    style Engine fill:#fefce8,stroke:#eab308,stroke-width:2px
+    style DB fill:#faf5ff,stroke:#a855f7,stroke-width:2px
+```
+
+---
+
+## 🔬 2. The 12-Point Row Processing Pipeline (What Happens Inside the Engine?)
+
+When asked **"What exactly happens to a messy CSV row when it enters your backend?"**, explain this step-by-step cleaning pipeline:
+
+```mermaid
+flowchart LR
+    R1["📥 Raw CSV Row"] --> R2{"❓ Required Fields Present?\n(Desc, Payer, Amount)"}
+    
+    R2 -->|"No"| ERR["❌ Reject Row:\nMissing Obligatory Values"]
+    R2 -->|"Yes"| R3["🔤 Typo Correction\n(Levenshtein Distance <= 2)"]
+    
+    R3 --> R4["💵 Currency & Math Cleaning\n(Strip symbols $, ₹ | Big.js Banker's Rounding)"]
+    
+    R4 --> R5{"📉 Negative Amount?"}
+    R5 -->|"Yes (-$500)"| REF["🔄 Auto-Reverse to Refund\n(is_refund: true | Swap roles)"]
+    R5 -->|"No"| R6["🌍 Multi-Currency Check"]
+    REF --> R6
+    
+    R6 -->|"Foreign (USD/EUR/GBP)"| CUR["💱 Convert to INR Base\n(Multiply by Real-Time Rate)"]
+    R6 -->|"INR"| R7["📅 Date Normalization\n(ISO & DD/MM/YYYY support)"]
+    CUR --> R7
+    
+    R7 --> R8["⚖️ Split Breakdown Check\n(Normalize % to sum to exactly 100%)"]
+    
+    R8 --> R9{"👥 Member Temporal Check\n(Did member join/leave?)"}
+    R9 -->|"Joined/Left Mid-Month"| PRO["📊 Calculate Pro-Rata Active Days\n& Redistribute Split Weights"]
+    R9 -->|"Active All Month"| R10["👯 Batch Duplicate Detection\n(Cross-check date, amount & desc)"]
+    PRO --> R10
+    
+    R10 --> R11["✨ Clean, Validated Row Ready for UI Review!"]
+
+    style ERR fill:#fee2e2,stroke:#ef4444,stroke-width:2px
+    style R11 fill:#dcfce7,stroke:#22c55e,stroke-width:2px
 ```
 
 ---
@@ -65,9 +112,9 @@ sequenceDiagram
 
 ---
 
-## 🔬 The 12-Point Sanitization & Business Logic Engine
+## 📋 Detailed Breakdown of the 12 Sanitization Rules
 
-Our core processing loop (`[csvSanitizer.js](file:///c:/Users/divya/OneDrive/Desktop/Expenses_App/backend/controllers/csvSanitizer.js)`) runs every row through a rigorous 12-point inspection before it ever reaches the database:
+Our core processing loop (`[csvSanitizer.js](file:///c:/Users/divya/OneDrive/Desktop/Expenses_App/backend/controllers/csvSanitizer.js)`) runs every row through this inspection:
 
 | # | Inspection / Rule | Engineering Implementation & Business Logic |
 |---|---|---|
