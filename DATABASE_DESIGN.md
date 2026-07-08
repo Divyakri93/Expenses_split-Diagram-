@@ -79,6 +79,38 @@ erDiagram
     USERS ||--o{ MESSAGES : "sends"
 ```
 
+### 🗣️ How to Explain This Database Design in Your Interview (Step-by-Step Guide)
+
+When presenting this design during a system design or database architecture round, use this structured explanation to walk the interviewer through **what you did, why you did it, and the engineering trade-offs**:
+
+#### 1️⃣ Walkthrough of the Tables (What we have)
+* **Users & Groups:** Standard entity tables representing system users and split-expense groups, keyed with **UUIDs** (Universal Unique Identifiers) instead of auto-incrementing integers.
+* **Group Members (Junction Table):** This is a Many-to-Many junction table (`group_members`) linking users to groups. But crucially, it is **stateful**—it records `joined_at`, `left_at`, and the user's `role` (Admin/Member).
+* **Expenses (The Parent Record):** Stores the metadata of a transaction—who paid (`paid_by_user_id`), the total `amount`, the `currency`, the `exchange_rate_to_base`, and a date.
+* **Expense Splits (The Child Breakdown):** A normalized table mapping each participant to their exact `calculated_share_amount` for a given expense.
+
+---
+
+#### 2️⃣ Why did we design it this way? (The Engineering "Why")
+
+##### ❓ Why is `group_members` stateful with `joined_at` and `left_at`?
+* **Interview Point:** *"In real-world group billing (like roommates or travel groups), members join or leave mid-cycle. If a member leaves on the 10th of a month, they should not be charged for expenses uploaded on the 20th. By keeping `joined_at` and `left_at` on the junction table, our sanitization engine can perform **temporal border checks** and pro-rata split weight adjustments automatically before any row is persisted."*
+
+##### ❓ Why decouple `Expenses` and `Expense Splits` instead of using a JSON column?
+* **Interview Point:** *"To maintain **3rd Normal Form (3NF)** and ensure high performance, we decoupled transaction metadata from individual split records. Storing splits as JSON inside the `expenses` table would prevent database-level referential integrity (foreign key constraints to ensure the participant actually belongs to the group). It also makes auditing aggregates—like calculating Rohan's net balance across 50 groups—extremely slow, as it would require parsing JSON on every read instead of doing a high-speed indexed JOIN query."*
+
+##### ❓ Why did we use UUIDs instead of Auto-Incrementing IDs?
+* **Interview Point:** *"UUIDs are used for primary keys across all main entities. This prevents **User Enumeration Attacks** (where malicious actors guess sequential IDs like `/users/1`, `/users/2` to scrape data). Additionally, it allows us to safely generate IDs client-side or merge records from offline mobile devices without worrying about ID conflicts or race conditions."*
+
+##### ❓ Why use `DECIMAL(12, 4)` and `DECIMAL(12, 6)`?
+* **Interview Point:** *"In financial systems, floating-point drift is unacceptable. Using `FLOAT` or `REAL` types causes rounding anomalies due to binary representation (IEEE 754 standard). We chose `DECIMAL` to force SQL database engines to store monetary values as fixed-point decimals, guaranteeing mathematical accuracy down to the penny."*
+
+---
+
+> [!TIP]
+> **🌟 Summary Pitch for the Interviewer:**
+> *"I designed this relational database schema to prioritize **strict data integrity** and **temporal correctness**. By decoupling transactions into parent `Expenses` and child `ExpenseSplits` tables, we achieve standard 3NF compliance. This allows us to index user-balances directly and perform high-speed database JOINs. We enforce referential constraints (`onDelete: RESTRICT` on payers) to prevent orphan ledger entries, and use Fixed-Point Decimals to block floating-point rounding errors."*
+
 ---
 
 ## 🔬 2. Critical Database Design Decisions
